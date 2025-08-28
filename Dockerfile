@@ -1,6 +1,6 @@
 FROM python:3.10-alpine as base
 
-LABEL org.opencontainers.image.source https://github.com/ghomasHudson/jellyfin-auto-collections
+LABEL org.opencontainers.image.source https://github.com/chafinchris97/jellyfin-auto-collections
 
 ENV RUNNING_IN_DOCKER true
 
