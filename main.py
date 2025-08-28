@@ -78,33 +78,60 @@ def main(config):
                 # Match list items to jellyfin items
                 list_info = plugins[plugin_name].get_list(list_id, config['plugins'][plugin_name])
 
-                # Find jellyfin collection or create it
-                collection_id = jf_client.find_collection_with_name_or_create(
-                    list_name or list_info['name'],
-                    list_id,
-                    list_info.get("description", None),
-                    plugin_name
-                )
-
-                if config["plugins"][plugin_name].get("clear_collection", False):
-                    # Optionally clear everything from the collection first
-                    jf_client.clear_collection(collection_id)
-
-                # Add items to the collection
-                for item in list_info['items']:
-                    matched = jf_client.add_item_to_collection(
-                        collection_id,
-                        item,
-                        year_filter=config["plugins"][plugin_name].get("year_filter", True),
-                        jellyfin_query_parameters=config["jellyfin"].get("query_parameters", {})
+                
+                # create or update playlist
+                if config["plugins"][plugin_name].get("playlist", True):
+                    playlist_id = jf_client.find_playlist_with_name_or_create(
+                        list_name or list_info['name'],
+                        list_id,
+                        list_info.get("description", None),
+                        plugin_name
                     )
-                    if not matched and js_client is not None:
-                        js_client.make_request(item)
 
-                # Add a poster image if collection doesn't have one
-                if not jf_client.has_poster(collection_id):
-                    logger.info("Collection has no poster - generating one")
-                    jf_client.make_poster(collection_id, list_info["name"])
+                    if config["plugins"][plugin_name].get("clear_collection", False):
+                        # optionally clear everything from the playlist first
+                        jf_client.clear_playlist(playlist_id)
+
+                    # add items to the playlist
+                    for item in list_info['items']:
+                        matched = jf_client.add_item_to_playlist(
+                            playlist_id,
+                            item,
+                            year_filter=config["plugins"][plugin_name].get("year_filter", True),
+                            jellyfin_query_parameters=config["jellyfin"].get("query_parameters", {})
+                        )
+                        if not matched and js_client is not None:
+                            js_client.make_request(item)
+
+                # create or update collection
+                else:
+                    # Find jellyfin collection or create it
+                    collection_id = jf_client.find_collection_with_name_or_create(
+                        list_name or list_info['name'],
+                        list_id,
+                        list_info.get("description", None),
+                        plugin_name
+                    )
+
+                    if config["plugins"][plugin_name].get("clear_collection", False):
+                        # Optionally clear everything from the collection first
+                        jf_client.clear_collection(collection_id)
+
+                    # Add items to the collection
+                    for item in list_info['items']:
+                        matched = jf_client.add_item_to_collection(
+                            collection_id,
+                            item,
+                            year_filter=config["plugins"][plugin_name].get("year_filter", True),
+                            jellyfin_query_parameters=config["jellyfin"].get("query_parameters", {})
+                        )
+                        if not matched and js_client is not None:
+                            js_client.make_request(item)
+
+                    # Add a poster image if collection doesn't have one
+                    if not jf_client.has_poster(collection_id):
+                        logger.info("Collection has no poster - generating one")
+                        jf_client.make_poster(collection_id, list_info["name"])
 
 
 

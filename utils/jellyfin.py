@@ -210,3 +210,120 @@ class JellyfinClient:
              requests.delete(f'{self.server_url}/Collections/{collection_id}/Items',headers={"X-Emby-Token": self.api_key}, params={"ids": ",".join(ids)})
 
         logger.info(f"Cleared collection {collection_id}")
+
+
+    def get_all_playlists(self):
+        params = {
+            "enableTotalRecordCount": "false",
+            "enableImages": "false",
+            "Recursive": "true",
+            "includeItemTypes": "Playlist",
+            "fields": ["Name", "Id", "Tags"]
+        }
+        res = requests.get(f"{self.server_url}/Users/{self.user_id}/Items", headers={"X-Emby-Token": self.api_key}, params=params)
+        return res.json()["Items"]
+    
+
+    def find_playlist_with_name_or_create(self, list_name: str, list_id: str, description: str, plugin_name: str) -> str:
+        playlist_id = None
+        playlists = self.get_all_playlists()
+
+        # check if list name is in tags
+        for playlist in playlists:
+            if json.dumps(list_id) in playlist["Tags"]:
+                playlist_id = playlist["Id"]
+                break
+
+        # if no match - Check if list name == playlist name
+        if playlist_id is None:
+            for playlist in playlists:
+                if list_name == playlist["Name"]:
+                    playlist_id = playlist["Id"]
+                    break
+
+        #if playlist_id is not None:
+            # logger.info("found existing playlist: " + list_name + " (" + playlist_id + ")")
+
+        if playlist_id is None:
+            # playlist doesn't exist -> Make a new one
+            # logger.info("No matching playlist found for: " + list_name + ". Creating new playlist...")
+            res2 = requests.post(f'{self.server_url}/Playlists', headers={"X-Emby-Token": self.api_key}, params={"mediaType": "Video", "name": list_name, "userId": {self.user_id}})
+            playlist_id = res2.json()["Id"]
+
+        # update collection description and add tags so we can find it later
+        if playlist_id is not None:
+            playlist = requests.get(f'{self.server_url}/Users/{self.user_id}/Items/{playlist_id}', headers={"X-Emby-Token": self.api_key}).json()
+            if playlist.get("Overview", "") == "" and description is not None:
+                playlist["Overview"] = description
+            playlist["Tags"] = list(set(playlist.get("Tags", []) + ["Jellyfin-Auto-Collections", plugin_name, json.dumps(list_id)]))
+            r = requests.post(f'{self.server_url}/Items/{playlist_id}', headers={"X-Emby-Token": self.api_key}, json=playlist)
+
+        return playlist_id
+    
+
+    def add_item_to_playlist(self, playlist_id: str, item, year_filter: bool = True, jellyfin_query_parameters={}):
+        '''Adds an item to a playlist based on item name and release year'''
+        
+        item["media_type"] = self.imdb_to_jellyfin_type_map.get(item["media_type"], item["media_type"])
+
+        params = {
+            "enableTotalRecordCount": "false",
+            "enableImages": "false",
+            "Recursive": "true",
+            "IncludeItemTypes": item["media_type"],
+            "searchTerm": item["title"],
+            "fields": ["ProviderIds", "ProductionYear"]
+        }
+
+        params = {**params, **jellyfin_query_parameters}
+
+        res = requests.get(f'{self.server_url}/Users/{self.user_id}/Items',headers={"X-Emby-Token": self.api_key}, params=params)
+
+        # Check if there's an exact imdb_id match first
+        match = None
+        if "imdb_id" in item:
+            for result in res.json()["Items"]:
+                if result["ProviderIds"].get("Imdb", None) == item["imdb_id"]:
+                    match = result
+                    break
+        else:
+            # Check if there's a year match
+            if match is None and year_filter:
+                for result in res.json()["Items"]:
+                    if str(result.get("ProductionYear", None)) == str(item["release_year"]):
+                        match = result
+                        break
+
+            # Otherwise, just take the first result
+            if match is None and len(res.json()["Items"]) == 1:
+                match = res.json()["Items"][0]
+
+        if match is None:
+            logger.warning(f"Item {item['title']} ({item.get('release_year','N/A')}) {item.get('imdb_id','')} not found in jellyfin")
+            logger.debug(f"List Candidate: {item}")
+            logger.debug(f"JF Search: {res.json()['Items']}")
+            return False
+        else:
+            try:
+                item_id = match["Id"]
+                requests.post(f'{self.server_url}/Playlists/{playlist_id}/Items',headers={"X-Emby-Token": self.api_key}, params={"ids": item_id, "userId": self.user_id})
+                logger.info(f"Added {item['title']} to playlist")
+                logger.debug(f"\tList item: {item}")
+                logger.debug(f"\tMatched JF item: {match}")
+                return True
+            except json.decoder.JSONDecodeError:
+                logger.error(f"Error adding {item['title']} to playlist - JSONDecodeError")
+        return False
+
+
+    def clear_playlist(self, playlist_id: str):
+        '''Clears a collection by removing all items from it'''
+        res = requests.get(f'{self.server_url}/Playlists/{playlist_id}/Items',headers={"X-Emby-Token": self.api_key}, params={"userId": self.user_id})
+        all_ids = [item["Id"] for item in res.json()["Items"]]
+
+        # chunk ids into groups of 10
+        all_ids = [all_ids[i:i + 10] for i in range(0, len(all_ids), 10)]
+        for ids in all_ids:
+             requests.delete(f'{self.server_url}/Playlists/{playlist_id}/Items',headers={"X-Emby-Token": self.api_key}, params={"entryIds": ",".join(ids)})
+
+        logger.info(f"Cleared playlist {playlist_id}")
